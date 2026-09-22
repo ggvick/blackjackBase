@@ -36,6 +36,7 @@ class Shoe:
         "_rank_counts",
         "_rank_counts_view",
         "_rng",
+        "_revision",
         "_cut_position",
         "num_decks",
         "penetration",
@@ -77,6 +78,7 @@ class Shoe:
         self._rank_counts = np.full(13, 4 * self.num_decks, dtype=np.int32)
         self._rank_counts_view = self._rank_counts.view()
         self._rank_counts_view.flags.writeable = False
+        self._revision = 0
         self._cut_position = int(self.total_cards * self.penetration)
         if shuffled:
             self._generator().shuffle(self._cards)
@@ -118,6 +120,12 @@ class Shoe:
     def is_empty(self) -> bool:
         return self._cursor == self.total_cards
 
+    @property
+    def revision(self) -> int:
+        """Monotonic composition revision used by synchronized consumers."""
+
+        return self._revision
+
     def __len__(self) -> int:
         return self.cards_remaining
 
@@ -132,6 +140,7 @@ class Shoe:
         code = int(self._cards[self._cursor])
         self._cursor += 1
         self._rank_counts[code % 13] -= 1
+        self._revision += 1
         return code
 
     def draw_codes(self, count: int, *, copy: bool = True) -> CardArray:
@@ -162,6 +171,8 @@ class Shoe:
                 np.int32, copy=False
             )
         self._cursor = end
+        if count:
+            self._revision += 1
         if copy:
             return result.copy()
         view = result.view()
@@ -220,6 +231,7 @@ class Shoe:
 
         self._cursor = 0
         self._rank_counts.fill(4 * self.num_decks)
+        self._revision += 1
         if shuffled:
             self._generator().shuffle(self._cards)
         else:

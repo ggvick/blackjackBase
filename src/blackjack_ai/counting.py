@@ -83,6 +83,8 @@ class BlackjackController:
         "counting_system",
         "_initial_rank_counts",
         "_initial_running_count",
+        "_running_count_cache",
+        "_shoe_revision",
     )
 
     def __init__(
@@ -116,6 +118,20 @@ class BlackjackController:
         self._initial_running_count = float(
             self._initial_rank_counts @ self.counting_system.tags
         )
+        self._running_count_cache = self._initial_running_count - float(
+            self.shoe.rank_counts(copy=False) @ self.counting_system.tags
+        )
+        self._shoe_revision = self.shoe.revision
+
+    def _synchronize_running_count(self) -> float:
+        """Resync after callers mutate the public shoe directly."""
+
+        if self._shoe_revision != self.shoe.revision:
+            self._running_count_cache = self._initial_running_count - float(
+                self.shoe.rank_counts(copy=False) @ self.counting_system.tags
+            )
+            self._shoe_revision = self.shoe.revision
+        return self._running_count_cache
 
     @property
     def seen_rank_counts(self) -> NDArray[np.int32]:
@@ -125,8 +141,7 @@ class BlackjackController:
 
     @property
     def running_count(self) -> float:
-        remaining_count = self.shoe.rank_counts(copy=False) @ self.counting_system.tags
-        return self._initial_running_count - float(remaining_count)
+        return self._synchronize_running_count()
 
     @property
     def true_count(self) -> float:
@@ -163,13 +178,29 @@ class BlackjackController:
         return float(self.shoe.rank_counts(copy=False)[0] / len(self.shoe))
 
     def draw_code(self) -> int:
-        return self.shoe.draw_code()
+        self._synchronize_running_count()
+        code = self.shoe.draw_code()
+        self._running_count_cache += float(self.counting_system.tags[code % 13])
+        self._shoe_revision = self.shoe.revision
+        return code
 
     def draw_codes(self, count: int, *, copy: bool = True) -> NDArray[np.uint8]:
-        return self.shoe.draw_codes(count, copy=copy)
+        self._synchronize_running_count()
+        codes = self.shoe.draw_codes(count, copy=copy)
+        if codes.size == 1:
+            self._running_count_cache += float(
+                self.counting_system.tags[int(codes[0]) % 13]
+            )
+        elif codes.size:
+            ranks = np.remainder(codes, 13)
+            self._running_count_cache += float(self.counting_system.tags[ranks].sum())
+        self._shoe_revision = self.shoe.revision
+        return codes
 
     def draw(self, count: int = 1) -> Card | tuple[Card, ...]:
-        return self.shoe.draw(count)
+        codes = self.draw_codes(count, copy=False)
+        cards = tuple(Card.from_code(code) for code in codes)
+        return cards[0] if count == 1 else cards
 
     def snapshot(self) -> CountSnapshot:
         """Return an immutable count/state record."""
@@ -187,26 +218,66 @@ class BlackjackController:
             cut_card_reached=self.shoe.cut_card_reached,
         )
 
-    def observation(self, *, dtype: np.dtype = np.dtype(np.float32)) -> NDArray:
+    def observation(
+        self,
+        *,
+        dtype: np.dtype = np.dtype(np.float32),
+        out: NDArray | None = None,
+    ) -> NDArray:
         """Return a compact 18-value AI observation vector.
 
         Layout: 13 next-rank probabilities, running count, true count, fraction
         dealt, ten-value probability, and ace probability. All composition
         features are exact rather than inferred from a human count.
+
+        Pass a writable ``out`` array with shape ``(18,)`` and the requested
+        dtype to reuse memory in a training loop. The returned object is then
+        the same array. Reusing a buffer avoids one allocation per observation.
         """
 
-        probabilities = self.shoe.rank_probabilities(dtype=dtype)
-        running_count = self.running_count
-        result = np.empty(18, dtype=dtype)
-        result[:13] = probabilities
+        requested_dtype = np.dtype(dtype)
+        if out is None:
+            result = np.empty(18, dtype=requested_dtype)
+        else:
+            if not isinstance(out, np.ndarray):
+                raise TypeError("out must be a numpy.ndarray")
+            if out.shape != (18,):
+                raise ValueError("out must have shape (18,)")
+            if out.dtype != requested_dtype:
+                raise TypeError(
+                    f"out has dtype {out.dtype}; expected {requested_dtype}"
+                )
+            if not out.flags.writeable:
+                raise ValueError("out must be writable")
+            result = out
+
+        # Read composition once and derive every feature in one pass. The old
+        # implementation called four helpers, each traversing or summing it.
+        counts = self.shoe.rank_counts(copy=False)
+        remaining = self.shoe.cards_remaining
+        running_count = self._synchronize_running_count()
+        if remaining:
+            inverse_remaining = 1.0 / remaining
+            np.multiply(
+                counts,
+                inverse_remaining,
+                out=result[:13],
+                casting="unsafe",
+            )
+            ten_values = int(
+                counts[9] + counts[10] + counts[11] + counts[12]
+            )
+            result[14] = running_count * 52.0 * inverse_remaining
+            result[16] = ten_values * inverse_remaining
+            result[17] = int(counts[0]) * inverse_remaining
+        else:
+            result.fill(0)
+
         result[13] = running_count
-        result[14] = (
-            0.0 if self.shoe.is_empty else running_count / self.shoe.decks_remaining
-        )
-        result[15] = self.shoe.fraction_dealt
-        result[16] = self.ten_value_probability
-        result[17] = self.ace_probability
+        result[15] = self.shoe.cards_dealt / self.shoe.total_cards
         return result
 
     def reset(self, *, shuffled: bool = True) -> None:
         self.shoe.reset(shuffled=shuffled)
+        self._running_count_cache = 0.0
+        self._shoe_revision = self.shoe.revision

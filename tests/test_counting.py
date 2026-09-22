@@ -33,6 +33,18 @@ def test_count_cannot_drift_when_shoe_is_drawn_directly() -> None:
     )
 
 
+def test_count_resynchronizes_after_direct_reset_and_draw() -> None:
+    shoe = Shoe(1, shuffled=False)
+    controller = BlackjackController(shoe)
+    shoe.draw_codes(2)
+    assert controller.running_count == 0
+
+    shoe.reset(shuffled=False)
+    shoe.draw_code()  # ace
+
+    assert controller.running_count == -1
+
+
 def test_full_balanced_shoe_finishes_at_zero_and_true_count_is_undefined() -> None:
     controller = BlackjackController(num_decks=2, shuffled=False)
     controller.draw_codes(104)
@@ -55,6 +67,50 @@ def test_exact_composition_features() -> None:
     assert observation.shape == (18,)
     assert observation.dtype == np.float32
     assert observation[:13].sum() == pytest.approx(1.0)
+
+
+def test_observation_can_reuse_output_buffer() -> None:
+    controller = BlackjackController(num_decks=1, shuffled=False)
+    controller.draw_codes(7)
+    expected = controller.observation()
+    output = np.empty(18, dtype=np.float32)
+
+    actual = controller.observation(out=output)
+
+    assert actual is output
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize(
+    ("output", "error"),
+    [
+        (np.empty(17, dtype=np.float32), ValueError),
+        (np.empty(18, dtype=np.float64), TypeError),
+        ([0.0] * 18, TypeError),
+    ],
+)
+def test_observation_rejects_invalid_output_buffer(
+    output: object, error: type[Exception]
+) -> None:
+    controller = BlackjackController(num_decks=1, shuffled=False)
+
+    with pytest.raises(error):
+        controller.observation(out=output)  # type: ignore[arg-type]
+
+
+def test_terminal_observation_preserves_unbalanced_running_count() -> None:
+    system = CountingSystem("always one", tuple([1.0] * 13))
+    controller = BlackjackController(
+        num_decks=1, shuffled=False, counting_system=system
+    )
+    controller.draw_codes(52)
+
+    observation = controller.observation()
+
+    assert np.all(np.isfinite(observation))
+    assert observation[13] == 52
+    assert observation[14] == 0
+    assert observation[15] == 1
 
 
 def test_snapshot_and_reset() -> None:
@@ -91,4 +147,3 @@ def test_counting_system_defensively_owns_tags() -> None:
 
     assert system.tags[0] == 0
     assert not system.tags.flags.writeable
-

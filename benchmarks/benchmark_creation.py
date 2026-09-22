@@ -11,6 +11,8 @@ import statistics
 import timeit
 from typing import Any
 
+import numpy as np
+
 from blackjack_ai import BlackjackController, Deck, Shoe
 
 
@@ -35,6 +37,17 @@ def benchmark(
     print(f"{label:32} {median * 1e6:10.3f} µs/op  ({1 / median:,.0f} ops/s)")
 
 
+def training_step(
+    controller: BlackjackController, observation_buffer: np.ndarray
+) -> None:
+    """One representative inference step, including a scalar draw."""
+
+    if not len(controller.shoe):
+        controller.reset(shuffled=False)
+    controller.draw_code()
+    controller.observation(out=observation_buffer)
+
+
 def main() -> None:
     print("Median of 7 runs (lower is better)")
     benchmark("Deck()", "Deck()", number=100_000)
@@ -54,10 +67,29 @@ def main() -> None:
 
     controller = BlackjackController(shuffled=False)
     benchmark(
-        "AI observation",
+        "AI observation, allocating",
         "controller.observation()",
-        number=20_000,
+        number=100_000,
         context={"controller": controller},
+    )
+    observation_buffer = np.empty(18, dtype=np.float32)
+    benchmark(
+        "AI observation, reused buffer",
+        "controller.observation(out=observation_buffer)",
+        number=100_000,
+        context={
+            "controller": controller,
+            "observation_buffer": observation_buffer,
+        },
+    )
+    benchmark(
+        "draw + reused observation",
+        "training_step(controller, observation_buffer)",
+        number=100_000,
+        context={
+            "controller": controller,
+            "observation_buffer": observation_buffer,
+        },
     )
 
 

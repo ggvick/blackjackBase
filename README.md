@@ -17,6 +17,8 @@ NumPy is the only runtime dependency. Pytest is only needed to run tests.
 ## Quick start
 
 ```python
+import numpy as np
+
 from blackjack_ai import BlackjackController, Hand, Shoe
 
 # Reproducible six-deck shoe, shuffled on construction.
@@ -35,6 +37,10 @@ print(controller.snapshot())
 # 18 float32 values: 13 rank probabilities, running/true counts,
 # fraction dealt, ten-value probability, and ace probability.
 state = controller.observation()
+
+# Avoid allocating a new array every step in a hot training loop.
+observation_buffer = np.empty(18, dtype=np.float32)
+state = controller.observation(out=observation_buffer)
 ```
 
 For display or external APIs, `shoe.draw()` returns a `Card` (or a tuple when
@@ -62,6 +68,10 @@ running count:
 - exact ace, ten-value, and high-card composition;
 - a ready-to-consume `float32` observation vector.
 
+For allocation-stable training loops, allocate one `(18,)` `float32` array per
+environment and pass it as `observation(out=buffer)`. The allocating form has
+similar raw throughput and is convenient when each returned state must be kept.
+
 `true_count` raises `ShoeEmptyError` when the shoe is empty because a true count
 cannot be defined with zero decks remaining. The AI observation substitutes
 zero in that terminal state so it always contains finite values.
@@ -72,6 +82,9 @@ zero in that terminal state so it always contains finite values.
 - A `Shoe` is built with `numpy.tile` and shuffled in-place with
   `numpy.random.Generator.shuffle`.
 - Scalar draws are O(1); batch composition updates use `numpy.bincount`.
+- Controller draws update a cached running count in O(1). A monotonic shoe
+  revision detects direct shoe mutations and triggers an exact resynchronization,
+  so the optimization does not sacrifice count correctness.
 - `Card` objects are deliberately created only at the readable API boundary.
 - Pass `copy=False` only for short-lived, read-only views when eliminating a
   small defensive copy matters. Such views may change after a shoe reset.
