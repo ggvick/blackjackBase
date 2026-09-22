@@ -1,1 +1,40 @@
-.venv
+# Virtual environments and local configuration
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test, coverage, type-checker, and linter output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.tox/
+.nox/
+
+# Benchmark and profiling output
+.benchmarks/
+*.prof
+*.lprof
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
