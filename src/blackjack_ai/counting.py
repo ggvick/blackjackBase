@@ -56,6 +56,8 @@ WONG_HALVES = CountingSystem(
     (-1, 0.5, 1, 1, 1.5, 1, 0.5, 0, -0.5, -1, -1, -1, -1),
 )
 
+COMPOSITION_COUNT_SIZE = 14
+
 
 @dataclass(frozen=True, slots=True)
 class CountSnapshot:
@@ -275,6 +277,58 @@ class BlackjackController:
 
         result[13] = running_count
         result[15] = self.shoe.cards_dealt / self.shoe.total_cards
+        return result
+
+    def composition_count(
+        self,
+        *,
+        dtype: np.dtype = np.dtype(np.float32),
+        out: NDArray | None = None,
+    ) -> NDArray:
+        """Return a lossless, bounded computer count for neural networks.
+
+        Unlike a scalar true count, this vector retains the exact depletion of
+        every rank. Values ``0..12`` are the fractions of aces through kings
+        already dealt, each in ``[0, 1]``. Value ``13`` is the starting shoe
+        size encoded as ``num_decks / (num_decks + 1)``, also in ``(0, 1)``.
+
+        The result always has shape ``(14,)``, contains finite values, and is
+        invariant to suit and deal order for an identical remaining
+        composition. Penetration is the mean of the first 13 values. Together
+        with the shoe-size value, the vector contains enough information to
+        reconstruct any linear running or true count while preserving rank
+        information those scalar counts discard.
+
+        Pass a writable ``out`` array to eliminate per-step allocation.
+        """
+
+        requested_dtype = np.dtype(dtype)
+        if out is None:
+            result = np.empty(COMPOSITION_COUNT_SIZE, dtype=requested_dtype)
+        else:
+            if not isinstance(out, np.ndarray):
+                raise TypeError("out must be a numpy.ndarray")
+            if out.shape != (COMPOSITION_COUNT_SIZE,):
+                raise ValueError(
+                    f"out must have shape ({COMPOSITION_COUNT_SIZE},)"
+                )
+            if out.dtype != requested_dtype:
+                raise TypeError(
+                    f"out has dtype {out.dtype}; expected {requested_dtype}"
+                )
+            if not out.flags.writeable:
+                raise ValueError("out must be writable")
+            result = out
+
+        initial_per_rank = 4 * self.shoe.num_decks
+        np.divide(
+            self.shoe.rank_counts(copy=False),
+            initial_per_rank,
+            out=result[:13],
+            casting="unsafe",
+        )
+        np.subtract(1.0, result[:13], out=result[:13])
+        result[13] = self.shoe.num_decks / (self.shoe.num_decks + 1.0)
         return result
 
     def reset(self, *, shuffled: bool = True) -> None:

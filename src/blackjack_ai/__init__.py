@@ -2,6 +2,7 @@
 
 from .cards import Card, Deck, Rank, Suit, card_rank_indices, card_values
 from .counting import (
+    COMPOSITION_COUNT_SIZE,
     HI_LO,
     OMEGA_II,
     WONG_HALVES,
@@ -15,6 +16,7 @@ from .shoe import Shoe, ShoeEmptyError
 __all__ = [
     "BlackjackController",
     "Card",
+    "COMPOSITION_COUNT_SIZE",
     "CountingSystem",
     "CountSnapshot",
     "Deck",

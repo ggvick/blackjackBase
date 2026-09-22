@@ -57,6 +57,14 @@ def main() -> None:
         "Controller(6), shuffled", "BlackjackController()", number=5_000
     )
 
+    shuffle_shoe = Shoe(6, rng=123)
+    benchmark(
+        "Shoe(6) reset + shuffle",
+        "shuffle_shoe.reset(shuffled=True)",
+        number=20_000,
+        context={"shuffle_shoe": shuffle_shoe},
+    )
+
     shoe = Shoe(8, shuffled=False)
     benchmark(
         "draw_code + periodic reset",
@@ -89,6 +97,16 @@ def main() -> None:
         context={
             "controller": controller,
             "observation_buffer": observation_buffer,
+        },
+    )
+    composition_buffer = np.empty(14, dtype=np.float32)
+    benchmark(
+        "composition count, reused",
+        "controller.composition_count(out=composition_buffer)",
+        number=100_000,
+        context={
+            "controller": controller,
+            "composition_buffer": composition_buffer,
         },
     )
 

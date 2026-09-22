@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from blackjack_ai import (
+    COMPOSITION_COUNT_SIZE,
     HI_LO,
     BlackjackController,
     CountingSystem,
@@ -111,6 +112,56 @@ def test_terminal_observation_preserves_unbalanced_running_count() -> None:
     assert observation[13] == 52
     assert observation[14] == 0
     assert observation[15] == 1
+
+
+def test_composition_count_is_bounded_fixed_and_exact() -> None:
+    controller = BlackjackController(num_decks=1, shuffled=False)
+    controller.draw_codes(2)  # ace and two of clubs
+
+    count = controller.composition_count()
+
+    assert count.shape == (COMPOSITION_COUNT_SIZE,)
+    assert count.dtype == np.float32
+    assert np.all(np.isfinite(count))
+    assert np.all((0 <= count) & (count <= 1))
+    np.testing.assert_allclose(count[:2], [0.25, 0.25])
+    np.testing.assert_array_equal(count[2:13], np.zeros(11, dtype=np.float32))
+    assert count[:13].mean() == pytest.approx(2 / 52)
+    assert count[13] == pytest.approx(0.5)
+
+
+def test_composition_count_reconstructs_true_count_without_information_loss() -> None:
+    controller = BlackjackController(num_decks=6, shuffled=False)
+    controller.draw_codes(73)
+    composition = controller.composition_count(dtype=np.float64)
+
+    rank_depletion = composition[:13]
+    reconstructed_running = float(
+        4 * controller.shoe.num_decks
+        * (rank_depletion @ controller.counting_system.tags)
+    )
+    reconstructed_decks_remaining = controller.shoe.num_decks * (
+        1.0 - float(rank_depletion.mean())
+    )
+
+    assert reconstructed_running == pytest.approx(controller.running_count)
+    assert reconstructed_decks_remaining == pytest.approx(
+        controller.shoe.decks_remaining
+    )
+    assert reconstructed_running / reconstructed_decks_remaining == pytest.approx(
+        controller.true_count
+    )
+
+
+def test_composition_count_can_reuse_output_buffer() -> None:
+    controller = BlackjackController(num_decks=8, rng=42)
+    controller.draw_codes(37)
+    output = np.empty(COMPOSITION_COUNT_SIZE, dtype=np.float32)
+
+    result = controller.composition_count(out=output)
+
+    assert result is output
+    np.testing.assert_array_equal(result, controller.composition_count())
 
 
 def test_snapshot_and_reset() -> None:

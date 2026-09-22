@@ -163,7 +163,10 @@ def _coerce_rng(rng: np.random.Generator | int | None) -> np.random.Generator:
     if rng is None or (
         isinstance(rng, (int, np.integer)) and not isinstance(rng, (bool, np.bool_))
     ):
-        return np.random.default_rng(rng)
+        # SFC64 is a statistically sound, non-cryptographic generator optimized
+        # for simulation throughput. Callers can supply another Generator when
+        # stream compatibility or a specific bit generator is required.
+        return np.random.Generator(np.random.SFC64(rng))
     raise TypeError("rng must be a numpy.random.Generator, integer seed, or None")
 
 
@@ -181,4 +184,3 @@ def card_values(codes: NDArray[np.integer]) -> NDArray[np.uint8]:
 
     ranks = card_rank_indices(codes) + np.uint8(1)
     return np.minimum(ranks, np.uint8(10))
-

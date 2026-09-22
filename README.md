@@ -41,6 +41,10 @@ state = controller.observation()
 # Avoid allocating a new array every step in a hot training loop.
 observation_buffer = np.empty(18, dtype=np.float32)
 state = controller.observation(out=observation_buffer)
+
+# A bounded, lossless computer count: exact A..K depletion plus shoe size.
+# This retains composition information that any scalar true count discards.
+computer_count = controller.composition_count()
 ```
 
 For display or external APIs, `shoe.draw()` returns a `Card` (or a tuple when
@@ -59,6 +63,21 @@ are clubs, diamonds, hearts, and spades. Helpers `card_rank_indices()` and
 accepts a custom `CountingSystem`. It computes its count from the exact dealt
 and remaining rank arrays. The result stays correct even if code draws directly
 from the attached `Shoe`.
+
+### Computer composition count
+
+`controller.composition_count()` is the recommended count input for a neural
+network. Its fixed 14-value layout is:
+
+- values 0–12: fraction of each rank dealt, ordered A, 2, ..., K;
+- value 13: starting deck count encoded as `decks / (decks + 1)`.
+
+Every value is finite and bounded in `[0, 1]`, including an exhausted shoe. The
+mean of the first 13 values is penetration. This vector is lossless with respect
+to rank composition: it can reconstruct Hi-Lo, Omega II, Wong Halves, or any
+other linear count, but it does not collapse different rank compositions to the
+same scalar as true count does. An `out=` buffer is supported for allocation-free
+training loops.
 
 The controller also exposes information a computer can use beyond a human
 running count:
@@ -80,7 +99,8 @@ zero in that terminal state so it always contains finite values.
 
 - `Deck()` shares an immutable 52-byte template.
 - A `Shoe` is built with `numpy.tile` and shuffled in-place with
-  `numpy.random.Generator.shuffle`.
+  `numpy.random.Generator.shuffle`; integer seeds use the fast SFC64 bit
+  generator, while caller-provided NumPy generators are honored unchanged.
 - Scalar draws are O(1); batch composition updates use `numpy.bincount`.
 - Controller draws update a cached running count in O(1). A monotonic shoe
   revision detects direct shoe mutations and triggers an exact resynchronization,
