@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from blackjack_ai import Card, Hand, Rank, Suit
@@ -40,3 +41,23 @@ def test_hand_accepts_card_objects_and_can_be_cleared() -> None:
     assert len(hand) == 0
     assert hand.total == 0
 
+
+def test_cached_totals_match_reference_for_random_hands() -> None:
+    """Guard the O(1) total cache against every ace-adjustment shape."""
+
+    rng = np.random.default_rng(20260922)
+    for size in range(Hand.MAX_CARDS + 1):
+        for _ in range(100):
+            codes = rng.integers(0, 52, size=size, dtype=np.uint8)
+            hand = Hand(codes)
+            ranks = codes.astype(np.int16) % 13 + 1
+            hard_total = int(np.minimum(ranks, 10).sum())
+            ace_count = int(np.count_nonzero(ranks == 1))
+            expected_total = (
+                hard_total + 10
+                if ace_count and hard_total + 10 <= 21
+                else hard_total
+            )
+
+            assert hand.total == expected_total
+            assert hand.is_soft is (ace_count > 0 and hard_total + 10 <= 21)

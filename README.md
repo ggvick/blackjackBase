@@ -10,6 +10,7 @@ training. Cards are stored as one-byte integer codes, so a six-deck shoe uses
 python -m pip install -e '.[test]'
 pytest
 python benchmarks/benchmark_creation.py
+python benchmarks/benchmark_game.py
 ```
 
 NumPy is the only runtime dependency. Pytest is only needed to run tests.
@@ -50,6 +51,73 @@ computer_count = controller.composition_count()
 For display or external APIs, `shoe.draw()` returns a `Card` (or a tuple when
 the requested count is greater than one). In performance-sensitive code,
 `draw_code()` and `draw_codes()` avoid creating Python card objects.
+
+## Complete game engine
+
+`BlackjackGame` owns a persistent shoe, dealer, bankroll, visible-card tracker,
+legal-action engine, split hands, settlement, and rewards. All table rules are
+immutable constructor settings, which makes an experiment's ruleset easy to
+record and reproduce.
+
+```python
+from blackjack_ai import (
+    Action,
+    BlackjackGame,
+    BlackjackRules,
+    DealerBlackjackLossRule,
+    HoleCardRule,
+    SurrenderRule,
+)
+
+rules = BlackjackRules(
+    num_decks=6,
+    penetration=0.75,
+    dealer_hits_soft_17=False,
+    blackjack_payout=1.5,
+    max_split_hands=4,
+    resplit_aces=False,
+    hit_split_aces=False,
+    double_after_split=True,
+    double_allowed_totals=None,  # any first two cards
+    surrender=SurrenderRule.LATE,
+    insurance_allowed=True,
+    hole_card_rule=HoleCardRule.AMERICAN,
+    dealer_blackjack_loss_rule=DealerBlackjackLossRule.ALL_BETS,
+)
+game = BlackjackGame(rules, starting_balance=10_000, rng=42)
+game.start_round(10, return_snapshot=False)
+
+while game.settlement is None:
+    mask = game.legal_action_mask()  # reusable bool array with 7 entries
+    state = game.observation()       # reusable float32 array with 43 entries
+    legal = game.legal_actions()
+    game.act(legal[0], return_snapshot=False)
+
+print(game.settlement.reward, game.cash.balance)
+```
+
+The stable action indices are `STAND`, `HIT`, `DOUBLE`, `SPLIT`, `SURRENDER`,
+`INSURANCE`, and `DECLINE_INSURANCE`. Insurance actions are exposed only during
+the insurance phase. Dealer play and settlement happen automatically after the
+last player hand completes. `settlement.reward` is the exact change in bankroll
+for the round, including split wagers, doubles, surrender, insurance, blackjack
+payouts, Charlie rules, and optional original-bet-only protection in a European
+no-hole-card game.
+
+The 43-value game observation contains only information visible to the player:
+visible rank depletion, active-hand facts, dealer up-card, and action context.
+The hidden hole card is excluded until reveal. Pass `out=` buffers to
+`observation()` and `legal_action_mask()`, and use `return_snapshot=False`, to
+avoid allocations in rollout loops. Readable snapshots remain available for
+debugging and user interfaces.
+
+The principal tuning knobs include deck count, cut-card penetration, S17/H17,
+American or European hole-card dealing, dealer peek, all-bets or
+original-bet-only dealer-blackjack loss, 3:2/6:5-style blackjack payouts,
+double restrictions, DAS, exact-rank versus equal-value splits, split limits,
+ace resplits/hits, early/late/no surrender, insurance, table limits, and
+optional Charlie rules. Invalid combinations and out-of-range settings fail at
+construction time.
 
 ## Card encoding
 
@@ -112,3 +180,15 @@ zero in that terminal state so it always contains finite values.
 Microbenchmarks vary by hardware and should be treated as comparative, not as
 hard performance guarantees. The benchmark script prints median time and
 throughput for each path.
+
+## Rules references
+
+The configurable rules are based on published casino/regulatory rules rather
+than one assumed universal table: Nevada's GameAce rules document configurable
+deck counts, S17/H17, doubling, splitting, surrender, blackjack payouts, and
+Charlie variants; Colorado's blackjack regulations cover splitting, doubling,
+insurance/even money, surrender, and original-bet handling. Casino rules vary,
+so record the complete `BlackjackRules` value with every experiment.
+
+- [Nevada Gaming Control Board GameAce Live Blackjack rules](https://www.gaming.nv.gov/siteassets/content/divisions/technology/rules-of-play/gameace-live-blackjack.pdf)
+- [Colorado blackjack regulations](https://www.law.cornell.edu/regulations/colorado/1-CCR-207-1-8)

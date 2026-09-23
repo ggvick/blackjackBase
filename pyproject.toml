@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blackjack-ai-core"
-version = "0.1.0"
-description = "Fast NumPy-backed blackjack cards, shoes, hands, and card counting"
+version = "0.2.0"
+description = "Fast NumPy-backed blackjack simulator and card-counting engine"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.24"]
@@ -19,4 +19,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-
