@@ -1,7 +1,13 @@
 """Public API for the NumPy-backed blackjack core."""
 
 from .cards import Card, Deck, Rank, Suit, card_rank_indices, card_values
-from .cash import Cash, CashSnapshot
+from .cash import (
+    CASH_HISTORY_DTYPE,
+    Cash,
+    CashSnapshot,
+    CashTransaction,
+    CashTransactionType,
+)
 from .counting import (
     COMPOSITION_COUNT_SIZE,
     HI_LO,
@@ -41,8 +47,11 @@ __all__ = [
     "BlackjackGame",
     "BlackjackRules",
     "Card",
+    "CASH_HISTORY_DTYPE",
     "Cash",
     "CashSnapshot",
+    "CashTransaction",
+    "CashTransactionType",
     "COMPOSITION_COUNT_SIZE",
     "CountingSystem",
     "CountSnapshot",

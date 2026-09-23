@@ -10,6 +10,7 @@ from blackjack_ai import (
     BlackjackGame,
     BlackjackRules,
     Cash,
+    CashTransactionType,
     DealerBlackjackLossRule,
     HandOutcome,
     HoleCardRule,
@@ -62,6 +63,24 @@ def test_player_natural_blackjack_pays_configured_three_to_two() -> None:
     assert game.cash.balance == 115
     assert game.settlement is not None
     assert game.settlement.hand_results[0].outcome is HandOutcome.BLACKJACK
+
+
+def test_game_bankroll_can_record_every_settlement_transaction() -> None:
+    cash = Cash(100, record_history=True)
+    configured = rules()
+    game = BlackjackGame(
+        configured,
+        cash=cash,
+        shoe=rigged_shoe([0, 5, 12, 7]),
+    )
+
+    game.start_round(10)
+
+    records = cash.transactions()
+    assert [(record.type, record.amount, record.balance) for record in records] == [
+        (CashTransactionType.DEBIT, 10, 90),
+        (CashTransactionType.CREDIT, 25, 115),
+    ]
 
 
 def test_dealer_blackjack_with_insurance_breaks_even() -> None:

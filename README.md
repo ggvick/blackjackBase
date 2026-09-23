@@ -10,6 +10,7 @@ training. Cards are stored as one-byte integer codes, so a six-deck shoe uses
 python -m pip install -e '.[test]'
 pytest
 python benchmarks/benchmark_creation.py
+python benchmarks/benchmark_cash.py
 python benchmarks/benchmark_game.py
 ```
 
@@ -118,6 +119,46 @@ double restrictions, DAS, exact-rank versus equal-value splits, split limits,
 ace resplits/hits, early/late/no surrender, insurance, table limits, and
 optional Charlie rules. Invalid combinations and out-of-range settings fail at
 construction time.
+
+### Optional transaction history
+
+`Cash` always maintains the current balance and aggregate credit/debit totals.
+Individual transaction history is opt-in, so it adds no storage or logging work
+to the default simulation path:
+
+```python
+from blackjack_ai import Cash, CashTransactionType
+
+cash = Cash(10_000, record_history=True, history_capacity=100_000)
+cash.debit(25)
+cash.credit(50)
+
+# Friendly immutable records for application code.
+for transaction in cash.transactions():
+    print(
+        transaction.sequence,
+        transaction.type,
+        transaction.amount,
+        transaction.balance,
+    )
+
+# Compact structured NumPy data for fast analysis. The no-copy form is
+# read-only and should be consumed before more transactions are appended.
+history = cash.history(copy=False)
+debits = history[history["type"] == CashTransactionType.DEBIT]
+
+cash.set_history_enabled(False)  # pause while retaining existing entries
+cash.set_history_enabled(True)   # resume with the next sequence number
+cash.clear_history()             # clear entries without changing the balance
+```
+
+Every successful `debit()` and `credit()` records its sequence number, type,
+amount, and resulting balance. Failed transactions are never recorded.
+`latest_transaction`, `transaction_count`, and `history_capacity` provide
+constant-time status access. Capacity grows geometrically, or it can be
+preallocated when the expected number of transactions is known. `reset()`
+clears history by default because it starts a new accounting period; pass
+`clear_history=False` to preserve it.
 
 ## Card encoding
 

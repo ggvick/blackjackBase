@@ -1,6 +1,7 @@
+import numpy as np
 import pytest
 
-from blackjack_ai import Cash
+from blackjack_ai import CASH_HISTORY_DTYPE, Cash, CashTransactionType
 
 
 def test_cash_tracks_balance_profit_and_turnover() -> None:
@@ -54,3 +55,119 @@ def test_cash_reset_starts_new_accounting_period() -> None:
     assert cash.net_profit == 0
     assert cash.total_credited == 0
     assert cash.total_debited == 0
+
+
+def test_opt_in_history_records_every_successful_debit_and_credit() -> None:
+    cash = Cash(100, record_history=True, history_capacity=1)
+
+    cash.debit(25)
+    cash.credit(10.5)
+    cash.debit(5)
+
+    assert cash.transaction_count == 3
+    assert cash.history_capacity >= 3
+    assert cash.latest_transaction is not None
+    assert cash.latest_transaction.type is CashTransactionType.DEBIT
+    assert cash.latest_transaction.balance == 80.5
+    records = cash.transactions()
+    assert [record.sequence for record in records] == [1, 2, 3]
+    assert [record.type for record in records] == [
+        CashTransactionType.DEBIT,
+        CashTransactionType.CREDIT,
+        CashTransactionType.DEBIT,
+    ]
+    assert [record.amount for record in records] == [25, 10.5, 5]
+    assert [record.balance for record in records] == [75, 85.5, 80.5]
+
+
+def test_numpy_history_api_is_compact_safe_and_can_avoid_a_copy() -> None:
+    cash = Cash(100, record_history=True)
+    cash.debit(20)
+    cash.credit(5)
+
+    copied = cash.history()
+    view = cash.history(copy=False)
+
+    assert copied.dtype == CASH_HISTORY_DTYPE
+    assert copied.dtype.itemsize <= 32
+    np.testing.assert_array_equal(copied["sequence"], [1, 2])
+    np.testing.assert_array_equal(
+        copied["type"],
+        [CashTransactionType.DEBIT, CashTransactionType.CREDIT],
+    )
+    np.testing.assert_array_equal(copied["amount"], [20, 5])
+    np.testing.assert_array_equal(copied["balance"], [80, 85])
+    assert copied.flags.writeable
+    assert not view.flags.writeable
+    with pytest.raises(ValueError):
+        view["amount"][0] = 999
+
+
+def test_disabled_history_has_no_storage_and_can_be_enabled_later() -> None:
+    cash = Cash(100)
+    cash.debit(10)
+
+    assert not cash.history_enabled
+    assert cash.history_capacity == 0
+    assert cash.transaction_count == 0
+    assert cash.transactions() == ()
+    assert cash.history(copy=False).shape == (0,)
+
+    cash.set_history_enabled(True, history_capacity=2)
+    cash.credit(5)
+    cash.set_history_enabled(False)
+    cash.debit(1)
+    cash.set_history_enabled(True, history_capacity=10)
+    cash.credit(2)
+
+    assert [record.amount for record in cash.transactions()] == [5, 2]
+    assert [record.sequence for record in cash.transactions()] == [1, 2]
+    assert cash.history_capacity == 10
+    assert cash.balance == 96
+
+
+def test_failed_transactions_are_not_recorded_and_history_can_be_cleared() -> None:
+    cash = Cash(10, record_history=True)
+
+    with pytest.raises(ValueError):
+        cash.debit(11)
+    assert cash.transaction_count == 0
+
+    cash.credit(1)
+    cash.clear_history(release_memory=True)
+
+    assert cash.transaction_count == 0
+    assert cash.history_capacity == 0
+    assert cash.latest_transaction is None
+    assert cash.history_enabled
+    cash.debit(1)
+    assert cash.transactions()[0].sequence == 1
+
+
+def test_reset_clears_history_by_default_or_can_preserve_it() -> None:
+    cash = Cash(100, record_history=True)
+    cash.debit(10)
+
+    cash.reset(clear_history=False)
+    assert cash.transaction_count == 1
+    cash.credit(5)
+    assert cash.transactions()[-1].sequence == 2
+
+    cash.reset(250)
+    assert cash.transaction_count == 0
+    assert cash.latest_transaction is None
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error"),
+    [
+        ({"record_history": 1}, TypeError),
+        ({"history_capacity": -1}, ValueError),
+        ({"history_capacity": True}, ValueError),
+    ],
+)
+def test_history_configuration_is_validated(
+    kwargs: dict[str, object], error: type[Exception]
+) -> None:
+    with pytest.raises(error):
+        Cash(**kwargs)  # type: ignore[arg-type]

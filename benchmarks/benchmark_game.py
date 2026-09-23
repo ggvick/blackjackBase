@@ -10,13 +10,28 @@ from time import perf_counter
 
 import numpy as np
 
-from blackjack_ai import Action, BlackjackGame, BlackjackRules, SurrenderRule
+from blackjack_ai import (
+    Action,
+    BlackjackGame,
+    BlackjackRules,
+    Cash,
+    SurrenderRule,
+)
 
 
-def run_policy(rounds: int, *, random_actions: bool) -> tuple[float, int]:
+def run_policy(
+    rounds: int,
+    *,
+    random_actions: bool,
+    record_cash_history: bool = False,
+) -> tuple[float, int]:
     game = BlackjackGame(
         BlackjackRules(surrender=SurrenderRule.NONE),
-        starting_balance=10_000_000,
+        cash=Cash(
+            10_000_000,
+            record_history=record_cash_history,
+            history_capacity=rounds * 4 if record_cash_history else 0,
+        ),
         rng=12345,
     )
     rng = np.random.default_rng(999)
@@ -39,8 +54,18 @@ def run_policy(rounds: int, *, random_actions: bool) -> tuple[float, int]:
     return perf_counter() - started, decisions
 
 
-def report(label: str, rounds: int, *, random_actions: bool) -> None:
-    elapsed, decisions = run_policy(rounds, random_actions=random_actions)
+def report(
+    label: str,
+    rounds: int,
+    *,
+    random_actions: bool,
+    record_cash_history: bool = False,
+) -> None:
+    elapsed, decisions = run_policy(
+        rounds,
+        random_actions=random_actions,
+        record_cash_history=record_cash_history,
+    )
     print(
         f"{label:30} {rounds / elapsed:12,.0f} rounds/s  "
         f"{decisions / elapsed:12,.0f} decisions/s"
@@ -50,6 +75,12 @@ def report(label: str, rounds: int, *, random_actions: bool) -> None:
 def main() -> None:
     report("stand policy", 50_000, random_actions=False)
     report("random legal policy", 20_000, random_actions=True)
+    report(
+        "random legal + cash history",
+        20_000,
+        random_actions=True,
+        record_cash_history=True,
+    )
 
 
 if __name__ == "__main__":
