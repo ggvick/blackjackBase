@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Iterator
 
 import numpy as np
@@ -38,6 +39,7 @@ class Shoe:
         "_rng",
         "_revision",
         "_cut_position",
+        "_total_cards",
         "num_decks",
         "penetration",
     )
@@ -56,10 +58,13 @@ class Shoe:
             or int(num_decks) < 1
         ):
             raise ValueError("num_decks must be a positive integer")
+        if isinstance(penetration, (bool, np.bool_)):
+            raise ValueError("penetration must be in the interval (0, 1]")
         if not np.isfinite(penetration) or not 0.0 < float(penetration) <= 1.0:
             raise ValueError("penetration must be in the interval (0, 1]")
 
         self.num_decks = int(num_decks)
+        self._total_cards = self.num_decks * 52
         self.penetration = float(penetration)
         if not (
             rng is None
@@ -79,7 +84,7 @@ class Shoe:
         self._rank_counts_view = self._rank_counts.view()
         self._rank_counts_view.flags.writeable = False
         self._revision = 0
-        self._cut_position = int(self.total_cards * self.penetration)
+        self._cut_position = math.ceil(self._total_cards * self.penetration)
         if shuffled:
             self._generator().shuffle(self._cards)
 
@@ -92,7 +97,7 @@ class Shoe:
     def total_cards(self) -> int:
         """Initial number of cards in the shoe."""
 
-        return self.num_decks * 52
+        return self._total_cards
 
     @property
     def cards_dealt(self) -> int:
@@ -100,7 +105,7 @@ class Shoe:
 
     @property
     def cards_remaining(self) -> int:
-        return self.total_cards - self._cursor
+        return self._total_cards - self._cursor
 
     @property
     def decks_remaining(self) -> float:
@@ -110,7 +115,7 @@ class Shoe:
 
     @property
     def fraction_dealt(self) -> float:
-        return self._cursor / self.total_cards
+        return self._cursor / self._total_cards
 
     @property
     def cut_card_reached(self) -> bool:
@@ -118,7 +123,7 @@ class Shoe:
 
     @property
     def is_empty(self) -> bool:
-        return self._cursor == self.total_cards
+        return self._cursor == self._total_cards
 
     @property
     def revision(self) -> int:
@@ -135,7 +140,7 @@ class Shoe:
     def draw_code(self) -> int:
         """Draw one card and return its compact code (the fastest draw API)."""
 
-        if self._cursor >= self.total_cards:
+        if self._cursor >= self._total_cards:
             raise ShoeEmptyError("cannot draw from an empty shoe")
         code = int(self._cards[self._cursor])
         self._cursor += 1
@@ -158,7 +163,7 @@ class Shoe:
             raise ValueError("count must be a non-negative integer")
         count = int(count)
         end = self._cursor + count
-        if end > self.total_cards:
+        if end > self._total_cards:
             raise ShoeEmptyError(
                 f"cannot draw {count} cards; only {self.cards_remaining} remain"
             )
@@ -196,7 +201,7 @@ class Shoe:
         ):
             raise ValueError("count must be a non-negative integer")
         end = self._cursor + int(count)
-        if end > self.total_cards:
+        if end > self._total_cards:
             raise ShoeEmptyError(
                 f"cannot peek at {count} cards; only {self.cards_remaining} remain"
             )
@@ -217,9 +222,12 @@ class Shoe:
     def rank_probabilities(self, *, dtype: np.dtype = np.dtype(np.float32)) -> NDArray:
         """Exact probability of the next rank in A..K order."""
 
+        requested_dtype = np.dtype(dtype)
+        if requested_dtype.kind != "f":
+            raise TypeError("dtype must be a floating-point dtype")
         if self.cards_remaining == 0:
-            return np.zeros(13, dtype=dtype)
-        return self._rank_counts.astype(dtype) / self.cards_remaining
+            return np.zeros(13, dtype=requested_dtype)
+        return self._rank_counts.astype(requested_dtype) / self.cards_remaining
 
     def shuffle(self) -> None:
         """Shuffle only the undealt portion of the current shoe in-place."""
@@ -235,4 +243,4 @@ class Shoe:
         if shuffled:
             self._generator().shuffle(self._cards)
         else:
-            self._cards[:] = np.tile(_DECK_TEMPLATE, self.num_decks)
+            self._cards.reshape(self.num_decks, 52)[:] = _DECK_TEMPLATE

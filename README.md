@@ -158,7 +158,9 @@ amount, and resulting balance. Failed transactions are never recorded.
 constant-time status access. Capacity grows geometrically, or it can be
 preallocated when the expected number of transactions is known. `reset()`
 clears history by default because it starts a new accounting period; pass
-`clear_history=False` to preserve it.
+`clear_history=False` to preserve it. A balance-changing preserved reset is
+recorded with `CashTransactionType.RESET`, so the balance trail remains
+continuous.
 
 ## Card encoding
 

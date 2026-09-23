@@ -64,6 +64,12 @@ def main() -> None:
         number=20_000,
         context={"shuffle_shoe": shuffle_shoe},
     )
+    benchmark(
+        "Shoe(6) ordered reset",
+        "shuffle_shoe.reset(shuffled=False)",
+        number=100_000,
+        context={"shuffle_shoe": shuffle_shoe},
+    )
 
     shoe = Shoe(8, shuffled=False)
     benchmark(

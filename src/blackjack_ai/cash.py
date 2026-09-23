@@ -15,6 +15,7 @@ class CashTransactionType(IntEnum):
 
     DEBIT = 0
     CREDIT = 1
+    RESET = 2
 
 
 CASH_HISTORY_DTYPE = np.dtype(
@@ -118,7 +119,9 @@ class Cash:
     def _validate_amount(
         amount: float, *, allow_zero: bool, name: str = "amount"
     ) -> float:
-        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        if isinstance(amount, (bool, np.bool_)) or not isinstance(
+            amount, (int, float, np.integer, np.floating)
+        ):
             raise TypeError(f"{name} must be a number")
         value = float(amount)
         if not math.isfinite(value) or value < 0 or (not allow_zero and value == 0):
@@ -161,8 +164,6 @@ class Cash:
         return 0 if self._history is None else len(self._history)
 
     def _record(self, transaction_type: CashTransactionType, amount: float) -> None:
-        if not self._history_enabled:
-            return
         history = self._history
         if history is None:
             history = np.empty(
@@ -284,7 +285,7 @@ class Cash:
         """Remove funds and return the new balance."""
 
         value = self._validate_amount(amount, allow_zero=False)
-        if not self.can_afford(value):
+        if self._balance < value:
             raise ValueError(
                 f"insufficient balance: need {value:g}, have {self._balance:g}"
             )
@@ -292,7 +293,8 @@ class Cash:
         self._total_debited = round(
             self._total_debited + value, self.precision
         )
-        self._record(CashTransactionType.DEBIT, value)
+        if self._history_enabled:
+            self._record(CashTransactionType.DEBIT, value)
         return self._balance
 
     def credit(self, amount: float) -> float:
@@ -303,7 +305,8 @@ class Cash:
         self._total_credited = round(
             self._total_credited + value, self.precision
         )
-        self._record(CashTransactionType.CREDIT, value)
+        if self._history_enabled:
+            self._record(CashTransactionType.CREDIT, value)
         return self._balance
 
     def reset(
@@ -315,6 +318,7 @@ class Cash:
         period. Pass ``clear_history=False`` to retain the earlier record.
         """
 
+        previous_balance = self._balance
         value = self._balance if balance is None else self._validate_amount(
             balance, allow_zero=True, name="balance"
         )
@@ -324,6 +328,8 @@ class Cash:
         self._total_debited = 0.0
         if clear_history:
             self.clear_history()
+        elif self._history_enabled and self._balance != previous_balance:
+            self._record(CashTransactionType.RESET, self._balance)
 
     def snapshot(self) -> CashSnapshot:
         return CashSnapshot(

@@ -56,3 +56,33 @@ def test_vectorized_card_values() -> None:
     codes = np.array([0, 8, 9, 10, 11, 12], dtype=np.uint8)
     np.testing.assert_array_equal(card_values(codes), [1, 9, 10, 10, 10, 10])
 
+
+@pytest.mark.parametrize(
+    "codes",
+    [
+        np.array([1.5, 2.0]),
+        np.array([True, False]),
+        np.array([], dtype=np.float64),
+    ],
+)
+def test_vectorized_helpers_reject_non_integer_code_arrays(
+    codes: np.ndarray,
+) -> None:
+    with pytest.raises(TypeError, match="integer dtype"):
+        card_rank_indices(codes)
+
+
+@pytest.mark.parametrize(
+    ("rank", "suit"),
+    [
+        (True, Suit.CLUBS),
+        (Rank.ACE, False),
+        (1.0, Suit.CLUBS),
+        (Rank.ACE, 0.0),
+    ],
+)
+def test_card_rejects_non_integer_rank_and_suit(
+    rank: object, suit: object
+) -> None:
+    with pytest.raises(ValueError):
+        Card(rank, suit)  # type: ignore[arg-type]

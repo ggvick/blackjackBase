@@ -17,6 +17,7 @@ from blackjack_ai import (
     RoundPhase,
     Shoe,
     SurrenderRule,
+    VisibleComposition,
 )
 
 
@@ -371,6 +372,14 @@ def test_table_limits_and_active_round_are_enforced() -> None:
         game.start_round(5)
 
 
+def test_round_accepts_numpy_numeric_wager() -> None:
+    game = game_for([9, 5, 7, 22])
+
+    game.start_round(np.float32(10))
+
+    assert game.cash.total_debited == 10
+
+
 def test_visible_observation_does_not_leak_hidden_hole_rank() -> None:
     first = game_for([9, 5, 7, 0])
     second = game_for([9, 5, 7, 12])
@@ -401,6 +410,20 @@ def test_game_observation_and_mask_have_stable_nn_contract() -> None:
     assert mask.shape == (ACTION_COUNT,)
     assert mask.dtype == np.bool_
     assert mask[Action.SPLIT]
+
+
+def test_visible_composition_rejects_invalid_decks_and_card_codes() -> None:
+    with pytest.raises(ValueError):
+        VisibleComposition(0)
+
+    visible = VisibleComposition(1)
+    with pytest.raises((TypeError, ValueError)):
+        visible.reveal(52)
+    with pytest.raises(TypeError):
+        visible.reveal_many(np.array([1.5]))
+    with pytest.raises(TypeError):
+        visible.reveal_many(np.array([], dtype=np.float64))
+    assert visible.seen_rank_counts.sum() == 0
 
 
 def test_observation_and_mask_support_reusable_output_buffers() -> None:
@@ -526,6 +549,47 @@ def test_invalid_action_does_not_mutate_round() -> None:
     after = game.snapshot()
     assert after == before
     assert game.cash.balance == balance
+
+
+@pytest.mark.parametrize("action", [True, False, 1.0, "1"])
+def test_non_integer_actions_cannot_alias_valid_action_ids(action: object) -> None:
+    game = game_for([9, 5, 7, 22])
+    before = game.start_round(10)
+
+    with pytest.raises(ValueError, match="unknown action"):
+        game.act(action)  # type: ignore[arg-type]
+
+    assert game.snapshot() == before
+
+
+def test_round_reshuffles_before_initial_deal_when_too_few_cards_remain() -> None:
+    configured = rules()
+    game = BlackjackGame(configured, rng=123, starting_balance=100)
+    game.controller.draw_codes(49)
+    assert game.shoe.cards_remaining == 3
+
+    game.start_round(10)
+
+    assert game.shoe.cards_dealt == 4
+    assert game.cash.total_debited == 10
+
+
+def test_game_output_buffers_must_be_numpy_and_writable() -> None:
+    game = game_for([9, 5, 7, 22])
+    game.start_round(10)
+    readonly_state = np.empty(GAME_OBSERVATION_SIZE, dtype=np.float32)
+    readonly_state.flags.writeable = False
+    readonly_mask = np.empty(ACTION_COUNT, dtype=np.bool_)
+    readonly_mask.flags.writeable = False
+
+    with pytest.raises(TypeError, match="numpy.ndarray"):
+        game.observation(out=[0.0] * GAME_OBSERVATION_SIZE)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="numpy.ndarray"):
+        game.legal_action_mask(out=[False] * ACTION_COUNT)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="writable"):
+        game.observation(out=readonly_state)
+    with pytest.raises(ValueError, match="writable"):
+        game.legal_action_mask(out=readonly_mask)
 
 
 def test_thousands_of_random_legal_rounds_preserve_invariants() -> None:

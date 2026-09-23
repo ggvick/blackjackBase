@@ -27,6 +27,23 @@ class Action(IntEnum):
 
 
 ACTION_COUNT = len(Action)
+_ACTION_BIT_MASK = (1 << ACTION_COUNT) - 1
+_ACTION_MASKS = np.asarray(
+    [
+        [bool(bits & (1 << index)) for index in range(ACTION_COUNT)]
+        for bits in range(1 << ACTION_COUNT)
+    ],
+    dtype=np.bool_,
+)
+_ACTION_MASKS.flags.writeable = False
+_ACTIONS_BY_BITS = tuple(
+    tuple(
+        Action(index)
+        for index in range(ACTION_COUNT)
+        if bits & (1 << index)
+    )
+    for bits in range(1 << ACTION_COUNT)
+)
 
 
 class SurrenderRule(IntEnum):
@@ -99,8 +116,24 @@ class BlackjackRules:
             or self.num_decks < 1
         ):
             raise ValueError("num_decks must be a positive integer")
-        if not math.isfinite(self.penetration) or not 0 < self.penetration <= 1:
+        if isinstance(self.penetration, bool) or not math.isfinite(
+            self.penetration
+        ) or not 0 < self.penetration <= 1:
             raise ValueError("penetration must be in (0, 1]")
+        for name in (
+            "dealer_hits_soft_17",
+            "dealer_peeks_for_blackjack",
+            "blackjack_after_split",
+            "double_after_split",
+            "double_on_any_number_of_cards",
+            "split_by_value",
+            "resplit_aces",
+            "hit_split_aces",
+            "surrender_after_split",
+            "insurance_allowed",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be a bool")
         if not isinstance(self.hole_card_rule, HoleCardRule):
             raise TypeError("hole_card_rule must be a HoleCardRule")
         if not isinstance(self.dealer_blackjack_loss_rule, DealerBlackjackLossRule):
@@ -158,8 +191,11 @@ class BlackjackRules:
             isinstance(self.minimum_cards_before_round, bool)
             or not isinstance(self.minimum_cards_before_round, int)
             or self.minimum_cards_before_round < 0
+            or self.minimum_cards_before_round > self.num_decks * 52
         ):
-            raise ValueError("minimum_cards_before_round must be a non-negative integer")
+            raise ValueError(
+                "minimum_cards_before_round must be between 0 and the shoe size"
+            )
 
 
 class RuleEngine:
@@ -193,12 +229,14 @@ class RuleEngine:
     ) -> bool:
         if len(hand.cards) != 2 or hand_count >= self.rules.max_split_hands:
             return False
-        codes = hand.cards.codes(copy=False)
-        if not self.cards_can_split(int(codes[0]), int(codes[1])):
+        cards = hand.cards
+        first_code = int(cards._cards[0])
+        second_code = int(cards._cards[1])
+        if not self.cards_can_split(first_code, second_code):
             return False
         if hand.split_aces and not self.rules.resplit_aces:
             return False
-        if int(codes[0]) % 13 == 0 and hand.from_split and not self.rules.resplit_aces:
+        if first_code % 13 == 0 and hand.from_split and not self.rules.resplit_aces:
             return False
         return available_balance >= hand.wager
 
@@ -238,20 +276,48 @@ class RuleEngine:
 
         if hand.is_complete:
             return 0
+        rules = self.rules
+        cards = hand.cards
+        card_count = len(cards)
+        total = cards.total
         bits = 1 << Action.STAND
-        if hand.cards.total < 21 and (
-            not hand.split_aces or self.rules.hit_split_aces
-        ):
+        if total < 21 and (not hand.split_aces or rules.hit_split_aces):
             bits |= 1 << Action.HIT
-        if self.can_double(hand, available_balance=available_balance):
-            bits |= 1 << Action.DOUBLE
-        if self.can_split(
-            hand,
-            hand_count=hand_count,
-            available_balance=available_balance,
+
+        if (
+            available_balance >= hand.wager
+            and (not hand.from_split or rules.double_after_split)
+            and (not hand.split_aces or rules.hit_split_aces)
+            and (rules.double_on_any_number_of_cards or card_count == 2)
+            and (
+                rules.double_allowed_totals is None
+                or total in rules.double_allowed_totals
+            )
         ):
-            bits |= 1 << Action.SPLIT
-        if self.can_surrender(hand, window_open=surrender_window_open):
+            bits |= 1 << Action.DOUBLE
+
+        if card_count == 2 and hand_count < rules.max_split_hands:
+            first_code = int(cards._cards[0])
+            second_code = int(cards._cards[1])
+            if (
+                self.cards_can_split(first_code, second_code)
+                and (not hand.split_aces or rules.resplit_aces)
+                and (
+                    first_code % 13 != 0
+                    or not hand.from_split
+                    or rules.resplit_aces
+                )
+                and available_balance >= hand.wager
+            ):
+                bits |= 1 << Action.SPLIT
+
+        if (
+            surrender_window_open
+            and rules.surrender is not SurrenderRule.NONE
+            and card_count == 2
+            and hand.actions_taken == 0
+            and (not hand.from_split or rules.surrender_after_split)
+        ):
             bits |= 1 << Action.SURRENDER
         return bits
 
@@ -260,16 +326,15 @@ class RuleEngine:
         bits: int, out: NDArray[np.bool_] | None = None
     ) -> NDArray[np.bool_]:
         result = np.empty(ACTION_COUNT, dtype=np.bool_) if out is None else out
+        if not isinstance(result, np.ndarray):
+            raise TypeError("out must be a numpy.ndarray")
         if result.shape != (ACTION_COUNT,) or result.dtype != np.bool_:
             raise ValueError(f"out must be a bool array with shape ({ACTION_COUNT},)")
-        for index in range(ACTION_COUNT):
-            result[index] = bool(bits & (1 << index))
+        if not result.flags.writeable:
+            raise ValueError("out must be writable")
+        result[:] = _ACTION_MASKS[bits & _ACTION_BIT_MASK]
         return result
 
     @staticmethod
     def actions_from_bits(bits: int) -> tuple[Action, ...]:
-        return tuple(
-            Action(index)
-            for index in range(ACTION_COUNT)
-            if bits & (1 << index)
-        )
+        return _ACTIONS_BY_BITS[bits & _ACTION_BIT_MASK]

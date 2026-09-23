@@ -73,6 +73,29 @@ def test_cut_card_and_reset() -> None:
     np.testing.assert_array_equal(shoe.peek_codes(4), [0, 1, 2, 3])
 
 
+def test_fractional_cut_position_is_reached_at_not_before_penetration() -> None:
+    shoe = Shoe(1, shuffled=False, penetration=0.1)
+
+    shoe.draw_codes(5)
+    assert shoe.fraction_dealt < 0.1
+    assert not shoe.cut_card_reached
+    shoe.draw_code()
+    assert shoe.fraction_dealt >= 0.1
+    assert shoe.cut_card_reached
+
+
+def test_unshuffled_multi_deck_reset_restores_order() -> None:
+    shoe = Shoe(8, rng=12)
+    shoe.draw_codes(200)
+
+    shoe.reset(shuffled=False)
+
+    np.testing.assert_array_equal(
+        shoe.peek_codes(shoe.total_cards),
+        np.tile(np.arange(52, dtype=np.uint8), 8),
+    )
+
+
 def test_remaining_rank_probabilities_are_exact() -> None:
     shoe = Shoe(1, shuffled=False)
     probabilities = shoe.rank_probabilities(dtype=np.float64)
@@ -85,8 +108,17 @@ def test_remaining_rank_probabilities_are_exact() -> None:
     assert probabilities.sum() == pytest.approx(1.0)
 
 
+def test_rank_probabilities_reject_non_floating_dtype() -> None:
+    with pytest.raises(TypeError, match="floating-point"):
+        Shoe(1).rank_probabilities(dtype=np.int32)
+
+
 @pytest.mark.parametrize("num_decks", [0, -1, 1.5, True])
 def test_invalid_deck_counts_are_rejected(num_decks: object) -> None:
     with pytest.raises(ValueError):
         Shoe(num_decks)  # type: ignore[arg-type]
 
+
+def test_boolean_penetration_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        Shoe(1, penetration=True)

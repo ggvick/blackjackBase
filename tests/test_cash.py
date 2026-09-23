@@ -20,6 +20,17 @@ def test_cash_tracks_balance_profit_and_turnover() -> None:
     assert snapshot.total_credited == 40.5
 
 
+def test_cash_accepts_numpy_numeric_scalars_but_not_numpy_booleans() -> None:
+    cash = Cash(np.float32(100))
+
+    cash.debit(np.int64(10))
+    cash.credit(np.float64(2.5))
+
+    assert cash.balance == 92.5
+    with pytest.raises(TypeError):
+        cash.credit(np.bool_(True))
+
+
 def test_cash_rejects_invalid_or_unaffordable_transactions() -> None:
     cash = Cash(10)
 
@@ -156,6 +167,20 @@ def test_reset_clears_history_by_default_or_can_preserve_it() -> None:
     cash.reset(250)
     assert cash.transaction_count == 0
     assert cash.latest_transaction is None
+
+
+def test_preserved_history_records_an_explicit_balance_reset() -> None:
+    cash = Cash(100, record_history=True)
+    cash.debit(10)
+
+    cash.reset(250, clear_history=False)
+
+    reset = cash.latest_transaction
+    assert reset is not None
+    assert reset.sequence == 2
+    assert reset.type is CashTransactionType.RESET
+    assert reset.amount == 250
+    assert reset.balance == 250
 
 
 @pytest.mark.parametrize(

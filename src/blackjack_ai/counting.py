@@ -183,7 +183,7 @@ class BlackjackController:
         self._synchronize_running_count()
         code = self.shoe.draw_code()
         self._running_count_cache += float(self.counting_system.tags[code % 13])
-        self._shoe_revision = self.shoe.revision
+        self._shoe_revision += 1
         return code
 
     def draw_codes(self, count: int, *, copy: bool = True) -> NDArray[np.uint8]:
@@ -196,7 +196,8 @@ class BlackjackController:
         elif codes.size:
             ranks = np.remainder(codes, 13)
             self._running_count_cache += float(self.counting_system.tags[ranks].sum())
-        self._shoe_revision = self.shoe.revision
+        if codes.size:
+            self._shoe_revision += 1
         return codes
 
     def draw(self, count: int = 1) -> Card | tuple[Card, ...]:
@@ -238,6 +239,8 @@ class BlackjackController:
         """
 
         requested_dtype = np.dtype(dtype)
+        if requested_dtype.kind != "f":
+            raise TypeError("dtype must be a floating-point dtype")
         if out is None:
             result = np.empty(18, dtype=requested_dtype)
         else:
@@ -303,6 +306,8 @@ class BlackjackController:
         """
 
         requested_dtype = np.dtype(dtype)
+        if requested_dtype.kind != "f":
+            raise TypeError("dtype must be a floating-point dtype")
         if out is None:
             result = np.empty(COMPOSITION_COUNT_SIZE, dtype=requested_dtype)
         else:

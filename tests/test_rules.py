@@ -121,8 +121,95 @@ def test_surrender_after_split_is_independently_configurable() -> None:
         {"double_allowed_totals": (1, 22)},
         {"charlie_card_count": 2},
         {"minimum_cards_before_round": -1},
+        {"num_decks": 1, "minimum_cards_before_round": 53},
     ],
 )
 def test_invalid_rules_are_rejected(kwargs: dict[str, object]) -> None:
     with pytest.raises((TypeError, ValueError)):
         BlackjackRules(**kwargs)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "dealer_hits_soft_17",
+        "dealer_peeks_for_blackjack",
+        "blackjack_after_split",
+        "double_after_split",
+        "double_on_any_number_of_cards",
+        "split_by_value",
+        "resplit_aces",
+        "hit_split_aces",
+        "surrender_after_split",
+        "insurance_allowed",
+    ],
+)
+def test_rule_flags_require_actual_booleans(name: str) -> None:
+    with pytest.raises(TypeError, match="must be a bool"):
+        BlackjackRules(**{name: 1})  # type: ignore[arg-type]
+
+
+def test_boolean_penetration_is_not_treated_as_one() -> None:
+    with pytest.raises(ValueError):
+        BlackjackRules(penetration=True)
+
+
+def test_optimized_legal_bits_match_individual_legality_apis() -> None:
+    rng = np.random.default_rng(4242)
+    rule_sets = (
+        BlackjackRules(),
+        BlackjackRules(
+            double_after_split=False,
+            double_allowed_totals=(9, 10, 11),
+            split_by_value=False,
+            surrender_after_split=True,
+        ),
+        BlackjackRules(
+            double_on_any_number_of_cards=True,
+            resplit_aces=True,
+            hit_split_aces=True,
+            max_split_hands=6,
+        ),
+    )
+
+    for configured in rule_sets:
+        engine = RuleEngine(configured)
+        for _ in range(500):
+            card_count = int(rng.integers(1, 7))
+            hand = player_hand(
+                tuple(int(code) for code in rng.integers(0, 52, card_count)),
+                wager=float(rng.integers(1, 20)),
+                from_split=bool(rng.integers(2)),
+                split_aces=bool(rng.integers(2)),
+            )
+            hand.actions_taken = int(rng.integers(3))
+            hand.stood = bool(rng.integers(8) == 0)
+            hand.surrendered = bool(rng.integers(12) == 0)
+            balance = float(rng.integers(0, 30))
+            hand_count = int(rng.integers(1, configured.max_split_hands + 2))
+            surrender_open = bool(rng.integers(2))
+
+            expected = 0
+            if not hand.is_complete:
+                expected |= 1 << Action.STAND
+                if hand.cards.total < 21 and (
+                    not hand.split_aces or configured.hit_split_aces
+                ):
+                    expected |= 1 << Action.HIT
+                if engine.can_double(hand, available_balance=balance):
+                    expected |= 1 << Action.DOUBLE
+                if engine.can_split(
+                    hand,
+                    hand_count=hand_count,
+                    available_balance=balance,
+                ):
+                    expected |= 1 << Action.SPLIT
+                if engine.can_surrender(hand, window_open=surrender_open):
+                    expected |= 1 << Action.SURRENDER
+
+            assert engine.legal_action_bits(
+                hand,
+                hand_count=hand_count,
+                available_balance=balance,
+                surrender_window_open=surrender_open,
+            ) == expected

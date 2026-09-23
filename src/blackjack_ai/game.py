@@ -9,7 +9,7 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
-from .cards import Card
+from .cards import Card, _validate_code, card_rank_indices
 from .cash import Cash
 from .counting import BlackjackController, CountingSystem, HI_LO
 from .hand import Hand
@@ -124,6 +124,12 @@ class VisibleComposition:
     __slots__ = ("num_decks", "_seen", "_buffer")
 
     def __init__(self, num_decks: int) -> None:
+        if (
+            isinstance(num_decks, (bool, np.bool_))
+            or not isinstance(num_decks, (int, np.integer))
+            or int(num_decks) < 1
+        ):
+            raise ValueError("num_decks must be a positive integer")
         self.num_decks = int(num_decks)
         self._seen = np.zeros(13, dtype=np.int32)
         self._buffer = np.empty(VISIBLE_COMPOSITION_SIZE, dtype=np.float32)
@@ -138,14 +144,20 @@ class VisibleComposition:
         self._seen.fill(0)
 
     def reveal(self, code: int) -> None:
-        self._seen[int(code) % 13] += 1
+        self._reveal_unchecked(_validate_code(code))
+
+    def _reveal_unchecked(self, code: int) -> None:
+        self._seen[code % 13] += 1
 
     def reveal_many(self, codes: NDArray[np.integer]) -> None:
         array = np.asarray(codes)
         if array.size:
-            self._seen += np.bincount(
-                np.remainder(array, 13), minlength=13
-            ).astype(np.int32, copy=False)
+            ranks = card_rank_indices(array)
+            self._seen += np.bincount(ranks, minlength=13).astype(
+                np.int32, copy=False
+            )
+        elif not np.issubdtype(array.dtype, np.integer):
+            raise TypeError("card codes must have an integer dtype")
 
     def encode(
         self,
@@ -153,10 +165,14 @@ class VisibleComposition:
         out: NDArray[np.float32] | None = None,
     ) -> NDArray[np.float32]:
         result = self._buffer if out is None else out
+        if not isinstance(result, np.ndarray):
+            raise TypeError("out must be a numpy.ndarray")
         if result.shape != (VISIBLE_COMPOSITION_SIZE,) or result.dtype != np.float32:
             raise ValueError(
                 f"out must be a float32 array with shape ({VISIBLE_COMPOSITION_SIZE},)"
             )
+        if not result.flags.writeable:
+            raise ValueError("out must be writable")
         np.divide(
             self._seen,
             4 * self.num_decks,
@@ -339,7 +355,9 @@ class BlackjackGame:
         return None if self.settlement is None else self.settlement.reward
 
     def _validate_wager(self, wager: float) -> float:
-        if isinstance(wager, bool) or not isinstance(wager, (int, float)):
+        if isinstance(wager, (bool, np.bool_)) or not isinstance(
+            wager, (int, float, np.integer, np.floating)
+        ):
             raise TypeError("wager must be a number")
         value = float(wager)
         if not math.isfinite(value):
@@ -349,12 +367,12 @@ class BlackjackGame:
                 f"wager must be between {self.rules.table_minimum:g} and "
                 f"{self.rules.table_maximum:g}"
             )
-        if not self.cash.can_afford(value):
+        if self.cash.balance < value:
             raise ValueError("insufficient balance for wager")
         return value
 
     def _reveal(self, code: int) -> None:
-        self.visible_composition.reveal(code)
+        self.visible_composition._reveal_unchecked(code)
 
     def _draw_player_card(self, hand: PlayerHand) -> int:
         code = self.controller.draw_code()
@@ -365,7 +383,8 @@ class BlackjackGame:
     def _reshuffle_if_needed(self) -> bool:
         if (
             self.shoe.cut_card_reached
-            or self.shoe.cards_remaining < self.rules.minimum_cards_before_round
+            or self.shoe.cards_remaining
+            < max(4, self.rules.minimum_cards_before_round)
         ):
             self.controller.reset(shuffled=True)
             self.visible_composition.reset()
@@ -504,7 +523,7 @@ class BlackjackGame:
         if self.phase is RoundPhase.INSURANCE:
             bits = 1 << Action.DECLINE_INSURANCE
             insurance_cost = self._initial_wager * self.rules.insurance_fraction
-            if self.cash.can_afford(insurance_cost):
+            if self.cash.balance >= insurance_cost:
                 bits |= 1 << Action.INSURANCE
             return bits
         hand = self.active_hand
@@ -535,8 +554,12 @@ class BlackjackGame:
         :meth:`observation` and :meth:`legal_action_mask` instead.
         """
 
+        if isinstance(action, (bool, np.bool_)) or not isinstance(
+            action, (int, np.integer)
+        ):
+            raise ValueError(f"unknown action: {action!r}")
         try:
-            selected = Action(action)
+            selected = Action(int(action))
         except (TypeError, ValueError) as exc:
             raise ValueError(f"unknown action: {action!r}") from exc
         legal_bits = self.legal_action_bits()
@@ -617,8 +640,8 @@ class BlackjackGame:
         if parent is None:
             raise RuntimeError("there is no active hand to split")
         self.cash.debit(parent.wager)
-        codes = parent.cards.codes(copy=False)
-        first_code, second_code = int(codes[0]), int(codes[1])
+        first_code = int(parent.cards._cards[0])
+        second_code = int(parent.cards._cards[1])
         split_aces = first_code % 13 == 0 and second_code % 13 == 0
         depth = parent.split_depth + 1
         eligible = self.rules.blackjack_after_split
@@ -804,10 +827,14 @@ class BlackjackGame:
         """Return the stable 43-value, visible-information AI state."""
 
         state = self._observation_buffer if out is None else out
+        if not isinstance(state, np.ndarray):
+            raise TypeError("out must be a numpy.ndarray")
         if state.shape != (GAME_OBSERVATION_SIZE,) or state.dtype != np.float32:
             raise ValueError(
                 f"out must be a float32 array with shape ({GAME_OBSERVATION_SIZE},)"
             )
+        if not state.flags.writeable:
+            raise ValueError("out must be writable")
         state.fill(0.0)
         self.visible_composition.encode(out=state[:14])
 
@@ -819,9 +846,10 @@ class BlackjackGame:
             state[15] = float(hand.cards.is_soft)
             state[16] = len(hand.cards) / hand.cards.MAX_CARDS
             if len(hand.cards) == 2:
-                codes = hand.cards.codes(copy=False)
-                if self.engine.cards_can_split(int(codes[0]), int(codes[1])):
-                    state[17 + int(codes[0]) % 13] = 1.0
+                first_code = int(hand.cards._cards[0])
+                second_code = int(hand.cards._cards[1])
+                if self.engine.cards_can_split(first_code, second_code):
+                    state[17 + first_code % 13] = 1.0
 
         if self.dealer.up_code is not None:
             rank = self.dealer.up_code % 13

@@ -99,6 +99,14 @@ def test_observation_rejects_invalid_output_buffer(
         controller.observation(out=output)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("method", ["observation", "composition_count"])
+def test_ai_features_reject_non_floating_dtype(method: str) -> None:
+    controller = BlackjackController(num_decks=1, shuffled=False)
+
+    with pytest.raises(TypeError, match="floating-point"):
+        getattr(controller, method)(dtype=np.int32)
+
+
 def test_terminal_observation_preserves_unbalanced_running_count() -> None:
     system = CountingSystem("always one", tuple([1.0] * 13))
     controller = BlackjackController(

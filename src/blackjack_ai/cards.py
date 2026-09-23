@@ -77,10 +77,18 @@ class Card:
     suit: Suit
 
     def __post_init__(self) -> None:
+        if isinstance(self.rank, (bool, np.bool_)) or not isinstance(
+            self.rank, (int, np.integer)
+        ):
+            raise ValueError(f"invalid rank: {self.rank!r}")
         try:
             rank = Rank(self.rank)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"invalid rank: {self.rank!r}") from exc
+        if isinstance(self.suit, (bool, np.bool_)) or not isinstance(
+            self.suit, (int, np.integer)
+        ):
+            raise ValueError(f"invalid suit: {self.suit!r}")
         try:
             suit = Suit(self.suit)
         except (TypeError, ValueError) as exc:
@@ -174,6 +182,10 @@ def card_rank_indices(codes: NDArray[np.integer]) -> NDArray[np.uint8]:
     """Vectorized zero-based rank indices for encoded cards."""
 
     array = np.asarray(codes)
+    if not np.issubdtype(array.dtype, np.integer) or np.issubdtype(
+        array.dtype, np.bool_
+    ):
+        raise TypeError("card codes must have an integer dtype")
     if array.size and (np.any(array < 0) or np.any(array > 51)):
         raise ValueError("all card codes must be in the range 0..51")
     return np.remainder(array, 13).astype(np.uint8, copy=False)

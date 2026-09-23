@@ -6,6 +6,7 @@ Run from the repository root with:
 
 from __future__ import annotations
 
+from statistics import median
 from time import perf_counter
 
 import numpy as np
@@ -61,11 +62,16 @@ def report(
     random_actions: bool,
     record_cash_history: bool = False,
 ) -> None:
-    elapsed, decisions = run_policy(
-        rounds,
-        random_actions=random_actions,
-        record_cash_history=record_cash_history,
-    )
+    samples = [
+        run_policy(
+            rounds,
+            random_actions=random_actions,
+            record_cash_history=record_cash_history,
+        )
+        for _ in range(3)
+    ]
+    elapsed = median(sample[0] for sample in samples)
+    decisions = samples[0][1]
     print(
         f"{label:30} {rounds / elapsed:12,.0f} rounds/s  "
         f"{decisions / elapsed:12,.0f} decisions/s"
